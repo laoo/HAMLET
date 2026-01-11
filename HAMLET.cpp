@@ -189,7 +189,10 @@ int main( int argc, char const* argv[] )
     }
     else
     {
-      outpath.replace_extension( ".bin" );
+      if ( outpath.has_extension() && outpath.extension() == ".bin" )
+        outpath.replace_extension( ".loader" );
+      else
+        outpath.replace_extension( ".bin" );
     }
 
     std::ofstream fout{ outpath, std::ios::binary };
