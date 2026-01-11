@@ -6,6 +6,8 @@
 #include <span>
 #include <filesystem>
 #include <fstream>
+#include <array>
+#include <optional>
 
 #include <boost/multiprecision/cpp_int.hpp>
 
@@ -91,41 +93,64 @@ std::vector<uint8_t> encrypt( std::span<uint8_t const> plain )
   return result;
 }
 
-std::pair<std::vector<uint8_t>, std::vector<uint8_t>> parseXex( std::span<uint8_t const> xex )
+struct XexParsingResult
 {
-  if ( xex.size() < 7 || xex[0] != 0xff && xex[1] != 0xff || xex[2] != 0x00 || xex[3] != 0x02 )
+  std::span<uint8_t const> optHeader;
+  std::vector<uint8_t> loader;
+  std::vector<uint8_t> rest;
+};
+
+XexParsingResult parseXex( std::span<uint8_t const> xex )
+{
+  if ( xex.size() < 7 || xex[0] != 0xff && xex[1] != 0xff )
   {
-    return { encrypt( xex ), std::vector<uint8_t>{} };
+    return { std::span<uint8_t const>{}, encrypt( xex ), std::vector<uint8_t>{} };
   }
 
-  uint16_t start = ( (uint16_t*)xex.data() )[1];
-  uint16_t stop = ( (uint16_t*)xex.data() )[2];
+  xex = xex.subspan( 2 );
+
+  uint16_t start = ( (uint16_t*)xex.data() )[0];
+  uint16_t stop = ( (uint16_t*)xex.data() )[1];
   uint16_t size = stop - start + 1;
 
-  if ( xex.size() < size + 6 )
+  std::span<uint8_t const> header;
+
+  if ( start == 0x0000 && size == 0x40 )
+  {
+    header = xex.subspan( 4, 0x40 );
+    xex = xex.subspan( 0x44 );
+    if ( xex[0] == 0xff && xex[1] == 0xff )
+      xex = xex.subspan( 2 );
+    start = ( (uint16_t*)xex.data() )[0];
+    stop = ( (uint16_t*)xex.data() )[1];
+    size = stop - start + 1;
+  }
+
+  if ( xex.size() < size )
     throw Ex{} << "Bad xex";
 
-  std::span<uint8_t const> loader{ xex.data() + 6, xex.data() + 6 + size };
-  std::vector<uint8_t> rest{ xex.begin() + 6 + size, xex.end() };
+  if ( start != 0x200 )
+    throw Ex{} << "Loader block must start at $200";
 
-  return { encrypt( loader ), rest };
+  std::span<uint8_t const> loader{ xex.data() + 4, xex.data() + 4 + size };
+  std::vector<uint8_t> rest{ xex.begin() + 4 + size, xex.end() };
+
+  return { header, encrypt( loader ), rest };
 }
 
 int main( int argc, char const* argv[] )
 {
   try
   {
-    if ( argc != 3 )
+    if ( argc != 2 )
     {
       std::cout << "Humble Another Minimal Lynx Encryption Tool. Usage:\n\n";
-      std::cout << "HAMLET\tinput.xex output.bin\tgenerates loader only\n\tinput.xex output.lyx\tfills image to 256k to be readable by AgaCart.\n\n";
-      std::cout << "If input file is in Atari xex format, only first block is encrypted, rest is appended as is,\n";
-      std::cout << "otherwise the whole input file is encrypted.\n";
+      std::cout << "HAMLET\tinput\n";
       return 1;
     }
 
     std::filesystem::path path{ argv[1] };
-    std::filesystem::path outpath{ argv[2] };
+    std::filesystem::path outpath = path;
 
     if ( !std::filesystem::exists( path ) )
     {
@@ -147,14 +172,29 @@ int main( int argc, char const* argv[] )
       fin.read( (char*)input.data(), size );
     }
 
-    auto [loader, rest] = parseXex( { input.data(), size } );
+    auto [header, loader, rest] = parseXex( { input.data(), size } );
 
-    if ( outpath.extension() == ".lyx" )
+
+    if ( header.empty() )
     {
+      outpath.replace_extension( ".lyx" );
       rest.resize( 256 * 1024 - loader.size(), 0xff );
+    }
+    else if ( !rest.empty() )
+    {
+      outpath.replace_extension( ".lnx" );
+      size_t pageSize = header[5] * 256;
+      size_t restSize = ( ( rest.size() + loader.size() + pageSize - 1 ) / pageSize ) * pageSize - loader.size();
+      rest.resize( restSize, 0xff );
+    }
+    else
+    {
+      outpath.replace_extension( ".bin" );
     }
 
     std::ofstream fout{ outpath, std::ios::binary };
+    if ( !header.empty() )
+      fout.write( (char const*)header.data(), header.size() );
     fout.write( (char const*)loader.data(), loader.size() );
     if ( !rest.empty() )
       fout.write( (char const*)rest.data(), rest.size() );
