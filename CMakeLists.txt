@@ -2,8 +2,7 @@
 
 project ("HAMLET")
 
-find_package( Boost )
-include_directories(${Boost_INCLUDE_DIRS})
+include_directories( libextern/multiprecision/include )
 set(CMAKE_CXX_STANDARD 20)
 
 add_executable (HAMLET "HAMLET.cpp" )
