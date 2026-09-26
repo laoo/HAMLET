@@ -3,7 +3,7 @@ Humble Another Minimal Lynx Encryption Tool
 
 ## Compilation
 
-Use CMake. Requires C++20
+Use CMake. Requires C++20 and nothing else: there are no dependencies
 
 ## Usage
 ```
